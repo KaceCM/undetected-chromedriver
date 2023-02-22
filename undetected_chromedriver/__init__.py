@@ -371,6 +371,9 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
             options.arguments.extend(["--no-sandbox", "--test-type"])
 
         if headless or options.headless:
+            if not version_main:
+                version_main = 110
+                logger.warning('version_main not specified, assuming "110" as default.')
             if self.patcher.version_main < 108:
                 options.add_argument("--headless=chrome")
             elif self.patcher.version_main >= 108:
