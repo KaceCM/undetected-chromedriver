@@ -282,7 +282,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
         if user_data_dir:
             options.add_argument("--user-data-dir=%s" % user_data_dir)
 
-        language, keep_user_data_dir = None, bool(user_data_dir)
+        language, keep_user_data_dir = None, True
 
         # see if a custom user profile is specified in options
         for arg in options.arguments:
@@ -335,7 +335,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
 
             else:
                 user_data_dir = os.path.normpath(tempfile.mkdtemp())
-                keep_user_data_dir = False
+                keep_user_data_dir = True
                 arg = "--user-data-dir=%s" % user_data_dir
                 options.add_argument(arg)
                 logger.debug(
@@ -722,11 +722,13 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
             logger.debug("gracefully closed browser")
         except Exception as e:  # noqa
             logger.debug(e, exc_info=True)
-        if (
+        '''if (
             hasattr(self, "keep_user_data_dir")
             and hasattr(self, "user_data_dir")
             and not self.keep_user_data_dir
         ):
+            print('ON EST DANS LE DEFONCETOUT ZEBI')
+            logger.error('ON EST DANS LE DEFONCETOUT')
             for _ in range(5):
                 try:
                     shutil.rmtree(self.user_data_dir, ignore_errors=False)
@@ -740,7 +742,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
                 else:
                     logger.debug("successfully removed %s" % self.user_data_dir)
                     break
-                time.sleep(0.1)
+                time.sleep(0.1)'''
 
         # dereference patcher, so patcher can start cleaning up as well.
         # this must come last, otherwise it will throw 'in use' errors
