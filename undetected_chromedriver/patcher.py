@@ -290,6 +290,7 @@ class Patcher(object):
 
     def __del__(self):
         logger.warning('we are in __del__ function. We are not deleting anything.')
+        return True
         if self._custom_exe_path:
             # if the driver binary is specified by user
             # we assume it is important enough to not delete it
