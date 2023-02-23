@@ -7,7 +7,10 @@ import logging
 import os
 import random
 import re
+import secrets
+import shutil
 import string
+import subprocess
 import sys
 import time
 from urllib.request import urlopen
@@ -60,7 +63,7 @@ class Patcher(object):
         """
         self.force = force
         self._custom_exe_path = False
-        prefix = "undetected"
+        prefix = f"undetected{secrets.token_hex( 4 )}"
 
         if not os.path.exists(self.data_path):
             os.makedirs(self.data_path, exist_ok=True)
@@ -85,6 +88,7 @@ class Patcher(object):
         if executable_path:
             self._custom_exe_path = True
             self.executable_path = executable_path
+
         self.version_main = version_main
         self.version_full = None
 
@@ -104,7 +108,6 @@ class Patcher(object):
             self.version_main = version_main
         if force is True:
             self.force = force
-
         try:
             os.unlink(self.executable_path)
         except PermissionError:
@@ -124,6 +127,32 @@ class Patcher(object):
         release = self.fetch_release_number()
         self.version_main = release.version[0]
         self.version_full = release
+
+        for file in os.listdir(self.data_path):
+            match = re.search("undetected(.+)driver(.+)?", file)
+            if not match:
+                logger.debug(" no match: %s" % file)
+                continue
+            pth = os.path.join(self.data_path, match[0])
+            logger.debug(
+                "found existing driver here: %s. \n"
+                "checking if we can use this one, instead of downloading a new package"
+                % pth
+            )
+            if self.is_binary_patched(pth):
+                version_match = re.search(
+                    "[\d]+",
+                    subprocess.check_output([pth, "--version"], encoding="utf-8"),
+                )
+                if version_match:
+                    pthver = int(version_match[0])
+                    if self.version_main == pthver:
+                        logger.debug(
+                            "yep, we will make a copy so we can skip downloading"
+                        )
+                        shutil.copyfile(pth, self.executable_path)
+                        return True
+
         self.unzip_package(self.fetch_package())
         return self.patch()
 
@@ -177,10 +206,21 @@ class Patcher(object):
         os.makedirs(self.zip_path, mode=0o755, exist_ok=True)
         with zipfile.ZipFile(fp, mode="r") as zf:
             zf.extract(self.exe_name, self.zip_path)
-        os.rename(os.path.join(self.zip_path, self.exe_name), self.executable_path)
-        os.remove(fp)
-        os.rmdir(self.zip_path)
-        os.chmod(self.executable_path, 0o755)
+        try:
+            os.rename(os.path.join(self.zip_path, self.exe_name), self.executable_path)
+            os.remove(fp)
+        except PermissionError:
+            # file in use, ignore and pass
+            # as same file can be used by multiple instance
+            pass
+        try:
+            os.rmdir(self.zip_path)
+            os.chmod(self.executable_path, 0o755)
+        except PermissionError:
+            #  sometimes: no access on the path, or driver still running
+            #  in other process
+            #  ignore. so start using the existing file
+            pass
         return self.executable_path
 
     @staticmethod
@@ -214,9 +254,9 @@ class Patcher(object):
     def patch_exe(self):
         start = time.perf_counter()
         logger.info("patching driver executable %s" % self.executable_path)
+    
         with io.open(self.executable_path, "r+b") as fh:
             content = fh.read()
-            # match_injected_codeblock = re.search(rb"{window.*;}", content)
             match_injected_codeblock = re.search(rb"\{window\.cdc.*?;\}", content)
             if match_injected_codeblock:
                 target_bytes = match_injected_codeblock[0]
@@ -225,6 +265,7 @@ class Patcher(object):
                         len(target_bytes), b" "
                     )
                 )
+
                 new_content = content.replace(target_bytes, new_target_bytes)
                 if new_content == content:
                     logger.warning(
@@ -233,7 +274,7 @@ class Patcher(object):
                 else:
                     logger.debug(
                         "found block:\n%s\nreplacing with:\n%s"
-                        % (target_bytes, new_target_bytes)
+                        % (target_bytes.strip(), new_target_bytes.strip())
                     )
                 fh.seek(0)
                 fh.write(new_content)
@@ -248,29 +289,35 @@ class Patcher(object):
         )
 
     def __del__(self):
-        logger.debug("We are in __del__, we are not deleting anything zebi")
-        return True
+        logger.warning('we are in __del__ function. We are not deleting anything.')
         if self._custom_exe_path:
             # if the driver binary is specified by user
             # we assume it is important enough to not delete it
             return
         else:
-            timeout = 3  # stop trying after this many seconds
+            timeout = 1  # stop trying after this many seconds
             t = time.monotonic()
             while True:
                 now = time.monotonic()
                 if now - t > timeout:
                     # we don't want to wait until the end of time
                     logger.debug(
-                        "could not unlink %s in time (%d seconds)"
+                        "could not unlink %s within the timeout window (%d seconds)"
                         % (self.executable_path, timeout)
                     )
                     break
                 try:
                     os.unlink(self.executable_path)
-                    logger.debug("successfully unlinked %s" % self.executable_path)
+                    logger.debug(
+                        "successfully unlinked %s after %.3f seconds"
+                        % (self.executable_path, now - t)
+                    )
                     break
-                except (OSError, RuntimeError, PermissionError):
+                except (OSError, RuntimeError, PermissionError) as e:
+                    logger.debug(
+                        "cuold not unlink %s because of %s . remaining seconds left: %.3f "
+                        % (self.executable_path, e, timeout - (now - t))
+                    )
                     time.sleep(0.1)
                     continue
                 except FileNotFoundError:
